@@ -75,7 +75,7 @@ func buildPrompt(question string, matches []store.Match) string {
 	var b strings.Builder
 	b.WriteString("Answer using only the context below. If it isn't there, say you don't know.\n\n")
 	for _, m := range matches {
-		fmt.Fprintf(&b, "[%s p.%d] %s\n\n", m.DocumentID, m.Page, m.Content)
+		fmt.Fprintf(&b, "[%s] %s\n\n", m.DocumentID, m.Content)
 	}
 	fmt.Fprintf(&b, "Question: %s\n", question)
 	return b.String()

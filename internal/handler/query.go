@@ -15,7 +15,6 @@ type queryRequest struct {
 type source struct {
 	Content    string `json:"content"`
 	DocumentID string `json:"document_id"`
-	Page       int    `json:"page"`
 }
 
 type queryResponse struct {
@@ -49,7 +48,6 @@ func Query(svc *service.QueryService) http.HandlerFunc {
 			sources = append(sources, source{
 				Content:    m.Content,
 				DocumentID: m.DocumentID,
-				Page:       m.Page,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -46,8 +46,8 @@ func TestPostgres_SaveAndSearch(t *testing.T) {
 
 	// Two chunks pointing in different directions in vector space.
 	chunks := []Chunk{
-		{DocumentID: "smoke-A", Content: "alpha", Page: 1, Embedding: unitVector(0)},
-		{DocumentID: "smoke-B", Content: "beta", Page: 2, Embedding: unitVector(1)},
+		{DocumentID: "smoke-A", Content: "alpha", Embedding: unitVector(0)},
+		{DocumentID: "smoke-B", Content: "beta", Embedding: unitVector(1)},
 	}
 	if err := pg.Save(ctx, chunks); err != nil {
 		t.Fatalf("save: %v", err)

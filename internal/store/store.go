@@ -12,7 +12,6 @@ import "context"
 type Chunk struct {
 	DocumentID string    // which source document this chunk came from
 	Content    string    // the chunk text itself, returned later as a citation
-	Page       int       // source page; zero when the format has no pages
 	Embedding  []float32 // the chunk's embedding; same model/dimension as queries
 }
 
@@ -22,7 +21,6 @@ type Chunk struct {
 type Match struct {
 	Content    string  // the matched chunk text, ready to drop into sources[]
 	DocumentID string  // source document, for the citation
-	Page       int     // source page, for the citation
 	Score      float32 // similarity to the query; higher is closer
 }
 

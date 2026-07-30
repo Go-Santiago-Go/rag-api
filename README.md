@@ -238,7 +238,7 @@ curl -X POST localhost:8080/ingest -H 'Content-Type: application/json' \
 
 curl -s -X POST localhost:8080/query -H 'Content-Type: application/json' \
   -d '{"question":"Where does pgvector store embeddings?"}'
-# { "answer": "...", "sources": [ { "content": "...", "document_id": "doc-1", "page": 0 } ] }
+# { "answer": "...", "sources": [ { "content": "...", "document_id": "doc-1" } ] }
 ```
 
 Development commands:
@@ -294,7 +294,7 @@ curl -s -X POST localhost:8080/query \
   -H 'Content-Type: application/json' \
   -d '{"question":"Where does pgvector store embeddings?"}'
 # { "answer": "pgvector stores embeddings inside Postgres.",
-#   "sources": [ { "content": "...", "document_id": "doc-1", "page": 1 } ] }
+#   "sources": [ { "content": "...", "document_id": "doc-1" } ] }
 ```
 
 Request body: `{ "question": string }`. The question is required; a malformed body or empty question

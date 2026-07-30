@@ -16,6 +16,5 @@ CREATE TABLE IF NOT EXISTS chunks (
     id          BIGSERIAL PRIMARY KEY,   -- auto-incrementing surrogate key
     document_id TEXT NOT NULL,           -- which source document this chunk came from
     content     TEXT NOT NULL,           -- the chunk text itself, returned as a citation
-    page        INT,                     -- source page; nullable, not every format has pages
     embedding   vector(1024) NOT NULL    -- Titan v2 embedding; 1024 MUST match the embedding model's output
 );

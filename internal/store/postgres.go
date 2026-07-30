@@ -40,10 +40,10 @@ func NewPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 // for the MVP; batching into a multi-row INSERT or CopyFrom is the later
 // optimization, not needed while ingesting one document at a time.
 func (s *Postgres) Save(ctx context.Context, chunks []Chunk) error {
-	// $1..$4 are placeholders, not string concatenation: the driver sends SQL
+	// $1..$3 are placeholders, not string concatenation: the driver sends SQL
 	// and values separately, so document text can never be parsed as SQL.
-	const q = `INSERT INTO chunks (document_id, content, page, embedding)
-			   VALUES ($1, $2, $3, $4)`
+	const q = `INSERT INTO chunks (document_id, content, embedding)
+			   VALUES ($1, $2, $3)`
 	for _, c := range chunks {
 		// ExecContext (not Exec) threads ctx to the driver, so a cancelled
 		// request cancels the in-flight statement. NewVector adapts the Go
@@ -51,7 +51,6 @@ func (s *Postgres) Save(ctx context.Context, chunks []Chunk) error {
 		if _, err := s.db.ExecContext(ctx, q,
 			c.DocumentID,
 			c.Content,
-			c.Page,
 			pgvector.NewVector(c.Embedding),
 		); err != nil {
 			return err
@@ -66,7 +65,7 @@ func (s *Postgres) Search(ctx context.Context, embedding []float32, topk int) ([
 	// <=> is pgvector's cosine-distance operator. Ordering by it ascending puts
 	// the closest vectors first; LIMIT keeps the top k. 1 - distance turns the
 	// distance into a 0..1 similarity score for the caller.
-	const q = `SELECT content, document_id, page, 1-(embedding <=> $1) AS score
+	const q = `SELECT content, document_id, 1-(embedding <=> $1) AS score
 			   FROM chunks
 			   ORDER BY embedding <=> $1
 			   LIMIT $2`
@@ -82,7 +81,7 @@ func (s *Postgres) Search(ctx context.Context, embedding []float32, topk int) ([
 	for rows.Next() {
 		var m Match
 		// Scan argument order must match the SELECT column order above.
-		if err := rows.Scan(&m.Content, &m.DocumentID, &m.Page, &m.Score); err != nil {
+		if err := rows.Scan(&m.Content, &m.DocumentID, &m.Score); err != nil {
 			return nil, err
 		}
 		matches = append(matches, m)

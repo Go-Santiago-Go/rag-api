@@ -65,8 +65,8 @@ func TestQueryService_Query(t *testing.T) {
 	// matches is what the store "returns"; the happy path must hand these back
 	// unchanged as the answer's sources.
 	matches := []store.Match{
-		{Content: "pgvector stores embeddings inside Postgres.", DocumentID: "doc-1", Page: 1},
-		{Content: "It ships as a Postgres extension.", DocumentID: "doc-1", Page: 2},
+		{Content: "pgvector stores embeddings inside Postgres.", DocumentID: "doc-1"},
+		{Content: "It ships as a Postgres extension.", DocumentID: "doc-1"},
 	}
 
 	// Sentinels so each error case asserts the failure came from the dependency it
