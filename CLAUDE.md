@@ -32,6 +32,11 @@ identifiers rather than the repo name, renaming them forces Terraform to destroy
 resources, and the ECR repository name is a contract shared between `infra/bootstrap`, the `data`
 lookup in `infra/`, and the CI push.
 
+The exception does not cover anything that encodes the *GitHub* repo. `github_repo` in
+`infra/bootstrap/variables.tf` is matched against the OIDC token's `sub` claim, so a rename breaks
+deploys with `Not authorized to perform sts:AssumeRoleWithWebIdentity` until bootstrap is re-applied.
+An IAM role *name* is a resource name; the repo inside its trust policy is not.
+
 ## Status: built and deployed (Phase 8 complete)
 
 The full service is implemented and has been deployed to AWS end to end: the `/ingest` and `/query`
