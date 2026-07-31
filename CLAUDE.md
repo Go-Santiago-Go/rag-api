@@ -51,7 +51,7 @@ internal/handler/          # HTTP handlers: parse request, call service, write r
 internal/service/          # RAG logic: chunk, embed, search, generate.
 internal/store/            # VectorStore interface plus pgvector implementation. Only place that knows SQL.
 internal/store/schema.sql  # canonical schema, embedded in the binary and applied idempotently on startup.
-eval/                      # retrieval evaluation: pinned corpus, labelled questions, recall@k harness.
+eval/                      # evaluation: pinned corpus, labelled questions, recall@k and answer-quality harnesses.
 eval/README.md             # results, controls and caveats. Read before changing retrieval or chunking.
 migrations/001_init.sql    # same schema, for the local docker-compose init hook.
 infra/                     # Terraform: the billable app stack (VPC, RDS, S3, ECS Express service).
@@ -101,6 +101,10 @@ CI (`.github/workflows/ci.yml`) runs `go build`, `go vet`, and `go test` on push
   control when a change varies more than one thing at once. Two adopted changes (reranking,
   chunking) and two rejected ones (hybrid search, document-level labels) all came from this, as did
   one retracted finding. 35 questions means one question is 2.9 points, so small deltas are noise.
+- **A judge is validated before it is trusted.** `eval/cmd/judge` grades answer faithfulness and
+  correctness, and `-validate` grades deliberately broken answers first to prove it can separate them
+  from good ones. Run validation before quoting any score: a grader that scores everything highly is
+  indistinguishable from a service that answers everything well.
 - **Comments explain the *why*, not the *what*.** Document exported identifiers per Go convention.
 
 ## Deployment (AWS) notes

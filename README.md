@@ -28,6 +28,27 @@ Two endpoints, one service:
 > The stack is torn down with `terraform destroy` after each session to avoid cost, so the URL is
 > regenerated per deploy rather than kept always-on.
 
+## Demo
+
+`GET /` serves a browser demo of the query path: ask a question, see the grounded answer, and read
+the exact passages it was generated from. It is a client of the public API and calls `POST /query`
+like any other caller, so it cannot show anything the API does not actually return.
+
+<!-- Record with the local stack running, then uncomment:
+![demo](docs/demo.gif)
+-->
+
+The page is compiled into the binary with `//go:embed`, which is what lets it ship in the distroless
+image with no filesystem to copy assets into and no second service to host. Sample questions are
+drawn from the labelled evaluation set in [`eval/golden.json`](eval/golden.json), so a demo run
+exercises questions whose retrieval behaviour is measured rather than assumed.
+
+```bash
+docker compose up -d
+go run ./cmd/server
+open http://localhost:8080
+```
+
 ## Architecture
 
 The service, end to end:
@@ -221,8 +242,9 @@ Built local-first, then deployed to AWS. Everything below is done and verified e
 
 ## Evaluation
 
-Retrieval quality is measured, not assumed. [`eval/`](eval/) holds a pinned 45 document corpus, 35
-questions hand-labelled with the passage that answers each one, and a harness reporting recall@k.
+Retrieval and answer quality are measured, not assumed. [`eval/`](eval/) holds a pinned 45 document
+corpus, 35 questions hand-labelled with the passage that answers each one, a harness reporting
+recall@k, and a second harness that grades the generated answers.
 
 Passage-level recall@5 on the harder of the two question phrasings, 35 questions, showing what each
 change bought:
@@ -248,6 +270,31 @@ Every step was measured before being adopted, and the harness was as useful for 
   from changing a constant. Structure-aware splitting cut severed chunk boundaries from 70% to 4.8%
   and moved recall barely at all. It is the default anyway, because chunks are returned verbatim as
   `sources[]` and a citation beginning mid-word is a defect the harness cannot see.
+
+### Answer quality
+
+Recall proves the right passage came back. It says nothing about what the model then did with it, so
+a second harness runs the real query pipeline and grades each answer with a different, stronger model
+on two axes: **faithfulness** (is every claim supported by the sources it was given) and
+**correctness** (does it state the labelled fact).
+
+Scores are split by whether retrieval actually found the answering passage, which is what separates
+"the model ignored good context" from "the model was never handed the answer":
+
+| phrasing | segment | n | faithfulness | correctness |
+|---|---|---|---|---|
+| paraphrased | retrieved | 27 | 2.00 | 1.89 |
+| paraphrased | not retrieved | 8 | 2.00 | 0.25 |
+| paraphrased | **overall** | 35 | **2.00** | **1.51** |
+
+**Zero unfaithful answers across 70 gradings**, including all 8 questions where retrieval failed
+outright. Handed nothing useful, the model declined instead of inventing an answer.
+
+A perfect faithfulness score is normally the saturation alarm, so the judge is validated before it is
+trusted: it grades deliberately broken answers and must separate them from clean ones. Swapping in
+another question's sources drops faithfulness to 0.20 while correctness holds at 2.00, and appending
+one invented flag drops it to 1.00. The check exits non-zero if that separation fails, which is what
+makes the ceiling readable as a result rather than a broken ruler.
 
 See [`eval/README.md`](eval/README.md) for the full results, the controls, and the caveats.
 
@@ -305,6 +352,12 @@ sourced from `go.mod` so it lives in one place. To run the same service on AWS b
 see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Endpoints
+
+### `GET /`
+
+The browser demo described [above](#demo). The route is registered as `GET /{$}`, where the `{$}`
+anchors the pattern to the site root exactly; a bare `GET /` in Go's `net/http` mux is a catch-all
+and would answer every unmatched path with the demo page instead of a 404.
 
 ### `POST /ingest`
 

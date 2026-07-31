@@ -7,6 +7,9 @@ chunking and search can be compared against a baseline instead of assessed by ey
 phrasing, and chunking strategy. Two were adopted, one finding was retracted. See
 [Results](#results).
 
+Answer quality is measured separately by [`cmd/judge`](#answer-quality), because recall proves the
+right passage came back and says nothing about what the model did with it.
+
 ## Layout
 
 ```
@@ -16,6 +19,9 @@ eval/
     prepare.sh       the Hugo to markdown transformation, committed for audit
   cmd/load/          ingests the corpus into a running service
   cmd/run/           asks the golden questions, reports recall@k
+  cmd/judge/         runs the real query pipeline, grades the answers
+  internal/golden/   the label rules, shared so run and judge cannot disagree
+  internal/judge/    the grading rubric and reply parser
   golden.json        35 questions labelled with the passage that answers them
 ```
 
@@ -73,11 +79,19 @@ go run ./eval/cmd/run                # the baseline: dense retrieval, original p
 go run ./eval/cmd/run -rerank        # add the cross-encoder second stage
 go run ./eval/cmd/run -paraphrase    # ask identifier questions without their rare token
 go run ./eval/cmd/run -verbose       # per-question ranks, for diagnosing a single failure
+
+go run ./eval/cmd/judge -validate -n 5   # prove the judge discriminates, ~45s. Run this first.
+go run ./eval/cmd/judge                  # grade all 35 answers, ~2m30s
+go run ./eval/cmd/judge -paraphrase      # the harder phrasing
 ```
 
 `load` truncates the `chunks` table before it starts. Pass `-reset=false` to append instead, though
 there is rarely a good reason to. `run` takes about 6 seconds dense and 12 with reranking, and the
 flags compose, so `-rerank -paraphrase` is the hardest of the four configurations.
+
+`judge` is far slower than `run` because it generates a real answer and then grades it, two model
+calls per question against `run`'s one embedding call. It needs no running server: like `run` it
+builds the pipeline in process, so `cmd/server` does not have to be up.
 
 Comparing chunking strategies means re-ingesting the corpus under each one, which is a server restart
 rather than a flag:
@@ -344,11 +358,94 @@ The full curve matters more than any single value:
   was never in the list. Nine questions are in that state under the hardest configuration, and they
   are the argument for looking at chunking next.
 
+## Answer quality
+
+`cmd/judge` measures the half `cmd/run` cannot see. It runs the real `/query` pipeline in process,
+then grades each answer with a second model on two axes, scored 0 to 2:
+
+- **Faithfulness.** Is every claim in the answer supported by the sources it was given? This is the
+  hallucination detector. Graded against the sources only; the reference fact is withheld from this
+  axis, so an answer that is true in the world but unsupported by these passages scores badly.
+- **Correctness.** Does the answer state the labelled fact? A refusal scores 0 here and 2 on
+  faithfulness, which is the combination that identifies honest abstention.
+
+There is deliberately no citation axis. `sources[]` is the five reranked chunks, always, whatever the
+model does; the model never selects citations, so there is nothing per-claim to validate.
+
+**The scale is three points, not five.** Five point rubrics collapse onto 4 and stop discriminating,
+which is the same failure as a retrieval baseline that scores 97% because the task was too easy.
+
+**The judge is a different model from the generator.** Answers come from Claude Haiku 4.5, grading
+from Claude Sonnet 4.6. A model grading its own output invites self-preference bias.
+
+### Validating the judge
+
+Run this before trusting any score:
+
+```bash
+go run ./eval/cmd/judge -validate -n 5
+```
+
+It grades deliberately broken answers and asserts the judge can tell them apart. Each variant is
+built to move one axis and leave the other alone, which distinguishes a judge that is reading from
+one that merely dislikes odd input.
+
+| variant | faithfulness | correctness |
+|---|---|---|
+| clean | 2.00 | 2.00 |
+| swapped sources (right answer, another question's passages) | **0.20** | 2.00 |
+| fabrication appended (one invented flag) | **1.00** | 2.00 |
+| refusal ("I don't know") | 2.00 | **0.00** |
+
+Swapped sources drove faithfulness to 0.20 while correctness held at 2.00. That is the axis
+isolation working: the answer still states the fact, it simply is not supported by what it was shown.
+The command exits non-zero if any separation check fails, so it is a gate rather than another table
+to eyeball.
+
+### Results
+
+Corpus `e95679c`, structured-800 chunking, reranking on, measured 2026-07-31.
+
+| phrasing | segment | n | faithfulness | correctness |
+|---|---|---|---|---|
+| original | retrieved | 32 | 2.00 | 1.94 |
+| original | not retrieved | 3 | 2.00 | 0.67 |
+| original | **overall** | 35 | **2.00** | **1.83** |
+| paraphrased | retrieved | 27 | 2.00 | 1.89 |
+| paraphrased | not retrieved | 8 | 2.00 | 0.25 |
+| paraphrased | **overall** | 35 | **2.00** | **1.51** |
+
+**Zero unfaithful answers across 70 gradings.** Faithfulness was 2 on every question in both runs,
+including all 8 paraphrased questions where retrieval failed outright. Handed nothing useful, the
+model declined rather than inventing an answer, which is exactly what the grounding prompt asks for
+and exactly what recall can never show.
+
+Faithfulness being pinned at 2.00 would normally be the saturation alarm. It is not, and only because
+the validation above ran first: the same judge scored fabrication at 1.00 and swapped sources at
+0.20, so it demonstrably can fail an answer. Ordering is what makes the ceiling readable as a result
+instead of a broken ruler.
+
+**Correctness tracks retrieval, as it should.** Paraphrased correctness falls from 1.89 to 0.25 when
+the answering passage is missing. The 27 of 35 retrieved here is 77.1%, matching the structured-800
+reranked figure from `cmd/run` exactly, which is a useful cross-check: two independently written
+harnesses agreeing to the decimal.
+
+### Caveats on these numbers
+
+- **One "not retrieved" question scored 2 anyway**, in both runs. The labelled substring was absent
+  from the returned sources while some other passage still answered the question. That is a label
+  being stricter than reality, not a model being lucky, and it means the "not retrieved" segment is a
+  slight underestimate of what the service can actually answer.
+- **Five of 35 verdicts came back with no reason attached.** They are counted and reported, because a
+  score that cannot be spot-checked cannot be audited. They cluster on refusals and on zeros.
+- **One retrieved question scored 0 on correctness** in the paraphrased run where the answer arguably
+  deserved a 1: it stated the right value and then hedged it into an alternative. Judge variance at
+  the boundary between 0 and 1 is real, and at 35 questions one verdict is 2.9 points.
+- **The judge is not itself validated against human labels.** `-validate` proves it separates good
+  answers from broken ones. It does not prove its scale agrees with a person's.
+
 ## What this does not measure
 
-- **Answer quality.** Recall@5 says the right document was retrieved. It says nothing about whether
-  the model then used it, ignored it, or contradicted it. Faithfulness and answer correctness are
-  separate metrics needing a different harness.
 - **Whether a hit is genuinely useful.** A substring label is a proxy for relevance, not relevance
   itself. Requiring the right document as well removes most of the risk that an incidental mention
   counts as an answer. It does not remove all of it.

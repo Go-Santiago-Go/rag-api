@@ -34,14 +34,27 @@ type Generator interface {
 // request and response knowledge lives in this file so nothing upstream depends
 // on it.
 type BedrockGenerator struct {
-	client *bedrockruntime.Client
+	client  *bedrockruntime.Client
+	modelID string
 }
 
 // NewBedrockGenerator returns a Generator backed by a configured Bedrock Runtime
-// client. The client carries AWS credentials and region, loaded once at main and
-// injected here.
+// client, using the service's default generation model. The client carries AWS
+// credentials and region, loaded once at main and injected here.
 func NewBedrockGenerator(client *bedrockruntime.Client) *BedrockGenerator {
-	return &BedrockGenerator{client: client}
+	return NewBedrockGeneratorWithModel(client, generationModelID)
+}
+
+// NewBedrockGeneratorWithModel returns a Generator pinned to a specific Bedrock
+// model.
+//
+// The evaluation judge needs this: grading an answer with the model that wrote
+// it invites self-preference bias, where a model rates its own output more
+// favourably than a third party would. Passing the ID explicitly keeps the
+// judge's model a visible choice in the harness rather than a constant buried
+// in the service.
+func NewBedrockGeneratorWithModel(client *bedrockruntime.Client, modelID string) *BedrockGenerator {
+	return &BedrockGenerator{client: client, modelID: modelID}
 }
 
 // Compile-time proof BedrockGenerator satisfies Generator; fails the build here
@@ -59,7 +72,7 @@ func (g *BedrockGenerator) Generate(ctx context.Context, prompt string) (string,
 	// types. A text block is a *types.ContentBlockMemberText because the interface
 	// marker method is on the pointer receiver, which is why it is taken by address.
 	out, err := g.client.Converse(ctx, &bedrockruntime.ConverseInput{
-		ModelId: aws.String(generationModelID),
+		ModelId: aws.String(g.modelID),
 		Messages: []types.Message{
 			{
 				Role: types.ConversationRoleUser,
