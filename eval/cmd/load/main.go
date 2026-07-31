@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 type ingestRequest struct {

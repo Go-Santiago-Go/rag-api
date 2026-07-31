@@ -11,9 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
-	"github.com/go-santiago-go/go-rag-api/internal/handler"
-	"github.com/go-santiago-go/go-rag-api/internal/service"
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/handler"
+	"github.com/go-santiago-go/rag-api/internal/service"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 // Default chunking parameters, all three chosen from measured evidence rather

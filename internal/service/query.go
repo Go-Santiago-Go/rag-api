@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 // topK is how many of the nearest chunks we retrieve to ground an answer. Five is

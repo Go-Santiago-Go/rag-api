@@ -1,4 +1,4 @@
-# Deploying go-rag-api to AWS
+# Deploying rag-api to AWS
 
 This walks through cloning the repo and standing up the whole service on AWS behind a public HTTPS
 URL: a containerized Go RAG service, pgvector in RDS, and Amazon Bedrock for embeddings and
@@ -23,8 +23,8 @@ same loop, so deploy to AWS only when you actually want the cloud demo.
 ## Step 1: Clone
 
 ```bash
-git clone https://github.com/Go-Santiago-Go/go-rag-api.git
-cd go-rag-api
+git clone https://github.com/Go-Santiago-Go/rag-api.git
+cd rag-api
 ```
 
 ## Step 2: Apply the persistent stack (free)

@@ -1,7 +1,7 @@
-# go-rag-api
+# rag-api
 
-[![ci](https://github.com/Go-Santiago-Go/go-rag-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Go-Santiago-Go/go-rag-api/actions/workflows/ci.yml)
-[![deploy](https://github.com/Go-Santiago-Go/go-rag-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/Go-Santiago-Go/go-rag-api/actions/workflows/deploy.yml)
+[![ci](https://github.com/Go-Santiago-Go/rag-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Go-Santiago-Go/rag-api/actions/workflows/ci.yml)
+[![deploy](https://github.com/Go-Santiago-Go/rag-api/actions/workflows/deploy.yml/badge.svg)](https://github.com/Go-Santiago-Go/rag-api/actions/workflows/deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **A production-shaped Retrieval Augmented Generation (RAG) service in Go, deployed on AWS.** It runs
@@ -273,8 +273,8 @@ Text Embeddings V2 and a Claude model in your region.
 
 ```bash
 # 1. Clone
-git clone https://github.com/Go-Santiago-Go/go-rag-api.git
-cd go-rag-api
+git clone https://github.com/Go-Santiago-Go/rag-api.git
+cd rag-api
 
 # 2. Start Postgres + pgvector (the schema auto-applies on first boot)
 docker compose up -d

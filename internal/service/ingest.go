@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 // IngestService turns a document's text into stored, searchable vectors. It

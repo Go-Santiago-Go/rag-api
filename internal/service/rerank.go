@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 // rerankModelID is the cross-encoder used to reorder retrieved candidates.

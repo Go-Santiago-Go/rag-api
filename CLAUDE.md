@@ -20,8 +20,17 @@ keeps that boundary clean.
 generation), S3 (raw doc storage), Docker, Terraform, GitHub Actions to ECR, ECS Express Mode on
 Fargate.
 
-**Canonical name:** `go-rag-api`. Use it for the repo, the README title, and the Go module path
-(`github.com/go-santiago-go/go-rag-api`). Do not introduce alternate names.
+**Canonical name:** `rag-api`. Use it for the repo and the README title. Do not introduce alternate
+names.
+
+The Go module path is `github.com/go-santiago-go/rag-api` and must track the repository URL. Go
+resolves a module by fetching its repo and then checking the `module` line agrees; if the two
+disagree, `go get` and `go install` fail on the mismatch.
+
+One deliberate exception: **AWS resource names stay `go-rag-api-*`.** They are infrastructure
+identifiers rather than the repo name, renaming them forces Terraform to destroy and recreate the
+resources, and the ECR repository name is a contract shared between `infra/bootstrap`, the `data`
+lookup in `infra/`, and the CI push.
 
 ## Status: built and deployed (Phase 8 complete)
 

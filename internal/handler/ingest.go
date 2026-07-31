@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/go-santiago-go/go-rag-api/internal/service"
+	"github.com/go-santiago-go/rag-api/internal/service"
 )
 
 // ingestRequest is the JSON body POST /ingest accepts: the raw document text

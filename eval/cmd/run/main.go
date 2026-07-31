@@ -22,8 +22,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 
-	"github.com/go-santiago-go/go-rag-api/internal/service"
-	"github.com/go-santiago-go/go-rag-api/internal/store"
+	"github.com/go-santiago-go/rag-api/internal/service"
+	"github.com/go-santiago-go/rag-api/internal/store"
 )
 
 // cutoffs are the values of k reported. They are all read from a single search
