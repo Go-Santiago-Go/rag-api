@@ -133,6 +133,10 @@ func main() {
 	querySvc := service.NewQueryService(embedder, pg, reranker, generator)
 
 	mux := http.NewServeMux()
+	// "/{$}" anchors the pattern to the site root exactly. A bare "/" would be a
+	// catch-all and would answer every unmatched path with the demo page instead
+	// of a 404, hiding typo'd routes.
+	mux.HandleFunc("GET /{$}", handler.Demo())
 	mux.HandleFunc("GET /health", handler.Health())
 	// handler.Ingest closes the service into a route-shaped handler.
 	mux.HandleFunc("POST /ingest", handler.Ingest(ingestSvc))
