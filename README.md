@@ -41,9 +41,16 @@ flowchart LR
 ```
 
 A document is chunked, each chunk is embedded with Bedrock, and the vectors are stored in pgvector.
-A query is embedded with the same model, the nearest chunks are retrieved by vector similarity, and
-those chunks are handed to an LLM that writes an answer grounded in them, returned with the source
-chunks it used.
+A query is embedded with the same model, then answered in two retrieval stages: vector similarity
+search returns a shortlist of 20 candidates, and a cross-encoder reranks those and keeps the best 5.
+Those 5 are handed to an LLM that writes an answer grounded in them, returned with the source chunks
+it used.
+
+The two stages exist because they fail differently. Similarity search is fast enough to scan the
+whole corpus but encodes each chunk without knowing what will be asked, so its ranking is coarse. A
+cross-encoder reads the question and a passage together and judges that specific pair far better, but
+nothing about it can be precomputed, so it can only afford to look at a shortlist. Cheap and
+approximate narrows the field; expensive and accurate orders what survives.
 
 ### Deployment (AWS)
 
@@ -180,6 +187,7 @@ later without disturbing the core.
 | Query response | `{ answer, sources[] }` | Structured citations make the demo verifiable and give a downstream agent clean data to reason over | Prose-only answers |
 | Text extraction | Local extraction | Free and offline; reach for a managed service only if the workload needs it | AWS Textract |
 | Compute | ECS Express Mode on Fargate | Managed networking, load balancing, and scaling from a container image; App Runner is closed to new customers | Full ECS Fargate |
+| Retrieval | Dense search + cross-encoder rerank | Measured: reranking moved the answering passage into first place for 7 more questions out of 35, and reached dense retrieval's recall@5 using 3 chunks instead of 5 | Hybrid BM25 + RRF, dense only |
 
 The pattern under all of it is **dependency inversion at the boundaries**: the RAG logic depends on
 a `VectorStore` interface (plus embedder and generator interfaces), and the concrete pieces
@@ -199,12 +207,36 @@ Built local-first, then deployed to AWS. Everything below is done and verified e
 - [x] Terraform for a three-tier VPC, private RDS, S3, and IAM
 - [x] Containerized with a distroless image; CI builds and pushes to ECR via OIDC
 - [x] Deployed on ECS Express Mode with a live public URL, `/ingest` and `/query` verified in the cloud
+- [x] Retrieval evaluation harness: pinned corpus, labelled question set, recall@k baseline
+- [x] Cross-encoder reranking, adopted on measured evidence rather than by default
+
+## Evaluation
+
+Retrieval quality is measured, not assumed. [`eval/`](eval/) holds a pinned 45 document corpus, 35
+questions hand-labelled with the passage that answers each one, and a harness reporting recall@k.
+
+Passage-level recall on the harder of the two question phrasings, 35 questions:
+
+| retrieval | recall@1 | recall@3 | recall@5 | recall@20 |
+|---|---|---|---|---|
+| dense only | 22.9% | 48.6% | 57.1% | 74.3% |
+| dense + rerank | 42.9% | 57.1% | 62.9% | 74.3% |
+
+recall@20 is identical by construction: reranking reorders the shortlist it was given and cannot add
+to it, which doubles as a correctness check on the harness. The gain is concentrated at rank 1, which
+is the expected signature of a reranker.
+
+The harness is also what ruled things *out*. Document-level labels scored 97.1% recall@5 and were
+discarded as saturated, since a metric with one question of dynamic range cannot compare two
+configurations. Hybrid BM25 search was deprioritized for a measured reason: lexical matching helps
+when the query contains the answer's rare token, and that is precisely the case dense retrieval
+already handles well. See [`eval/README.md`](eval/README.md) for the full results and caveats.
 
 ## Stack
 
 - **Go** for the service (standard library `net/http`, no framework).
 - **pgvector / Postgres** for vector storage.
-- **AWS Bedrock** for embeddings (Titan v2) and answer generation (Claude).
+- **AWS Bedrock** for embeddings (Titan v2), reranking (Cohere Rerank v3.5), and answer generation (Claude).
 - **S3** for raw document storage.
 - **Docker** to containerize, **Terraform** for infrastructure, **GitHub Actions** for CI/CD to ECR.
 - **ECS Express Mode on Fargate** to run it.
@@ -284,10 +316,12 @@ incomplete body returns `400`, and a Bedrock or database failure returns `500`.
 ### `POST /query`
 
 Answers a question about the ingested corpus: embed the question with the same Titan v2 model, retrieve
-the nearest chunks from pgvector by vector similarity, and have a Claude model write an answer
-constrained to those chunks. Returns `{ answer, sources[] }`, where each source is the chunk that
-backed the answer. Generation goes through the Bedrock Converse API, so the running machine also needs
-the Claude model enabled in the region (a one-time Anthropic use-case form per account gates first use).
+the 20 nearest chunks from pgvector by vector similarity, rerank those with a cross-encoder and keep
+the best 5, then have a Claude model write an answer constrained to them. Returns
+`{ answer, sources[] }`, where each source is a chunk that backed the answer and `score` is the
+reranker's relevance judgement rather than the cosine similarity search produced. Generation goes
+through the Bedrock Converse API, so the running machine needs the Claude model and Cohere Rerank v3.5
+enabled in the region (a one-time Anthropic use-case form per account gates first use of Claude).
 
 ```bash
 curl -s -X POST localhost:8080/query \

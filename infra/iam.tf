@@ -8,6 +8,7 @@
 # same models the code invokes, or calls fail AccessDenied.
 locals {
   titan_model    = "amazon.titan-embed-text-v2:0"                # embeddings, called directly
+  rerank_model   = "cohere.rerank-v3-5:0"                        # cross-encoder reranking, called directly
   claude_model   = "anthropic.claude-haiku-4-5-20251001-v1:0"    # the underlying foundation model
   claude_profile = "us.anthropic.claude-haiku-4-5-20251001-v1:0" # the cross-region inference profile we call
 
@@ -48,6 +49,16 @@ data "aws_iam_policy_document" "task_permissions" {
     sid       = "TitanEmbeddings"
     actions   = ["bedrock:InvokeModel"]
     resources = ["arn:aws:bedrock:${var.aws_region}::foundation-model/${local.titan_model}"]
+  }
+
+  # Cohere Rerank: like Titan, invoked directly rather than through an inference
+  # profile, so one action against one foundation-model ARN in one region. No
+  # wildcard in the resource and no bedrock:* in the action: the role can invoke
+  # this specific model and nothing else in Bedrock.
+  statement {
+    sid       = "CohereRerank"
+    actions   = ["bedrock:InvokeModel"]
+    resources = ["arn:aws:bedrock:${var.aws_region}::foundation-model/${local.rerank_model}"]
   }
 
   # Claude generation via a cross-region inference profile. This is the subtle

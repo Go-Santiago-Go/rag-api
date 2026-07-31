@@ -14,6 +14,17 @@ import (
 // warrants; kept as a constant to avoid a magic number at the call site.
 const topK = 5
 
+// candidateK is how many chunks are retrieved before reranking. The cross-encoder
+// can only reorder what search already found, so this number is the ceiling on
+// what reranking can recover: raising it widens the net, and lowering it to topK
+// makes the reranker pointless because it would only shuffle the same five
+// chunks into a different order, leaving the prompt identical.
+//
+// Twenty is measured, not guessed. Against the eval corpus the answering passage
+// sits in the top 20 far more often than in the top 5, and that gap is exactly
+// what the reranker exists to convert.
+const candidateK = 20
+
 // Answer is what a query resolves to: the generated prose plus the source chunks
 // it was grounded in. Returning the sources, not just the text, is the contract
 // that makes this service more than a chatbot: a human (or Project 2's agent)
@@ -30,14 +41,15 @@ type Answer struct {
 type QueryService struct {
 	embedder  Embedder
 	store     store.VectorStore
+	reranker  Reranker
 	generator Generator
 }
 
 // NewQueryService wires the query pipeline from its dependencies. The concrete
 // Bedrock embedder, pgvector store, and Bedrock generator are injected at main;
 // a test injects fakes.
-func NewQueryService(embedder Embedder, vs store.VectorStore, generator Generator) *QueryService {
-	return &QueryService{embedder: embedder, store: vs, generator: generator}
+func NewQueryService(embedder Embedder, vs store.VectorStore, reranker Reranker, generator Generator) *QueryService {
+	return &QueryService{embedder: embedder, store: vs, reranker: reranker, generator: generator}
 }
 
 // Query answers a question about the ingested corpus. It embeds the question with
@@ -54,10 +66,20 @@ func (s *QueryService) Query(ctx context.Context, question string) (Answer, erro
 		return Answer{}, fmt.Errorf("embed question: %w", err)
 	}
 
-	// Nearest-neighbour search for the chunks most similar to the question.
-	matches, err := s.store.Search(ctx, embedding, topK)
+	// Nearest-neighbour search for the chunks most similar to the question. This
+	// retrieves candidateK, not topK: the first stage is fast and approximate, so
+	// it is asked for a generous shortlist rather than a final answer.
+	matches, err := s.store.Search(ctx, embedding, candidateK)
 	if err != nil {
 		return Answer{}, fmt.Errorf("search chunks: %w", err)
+	}
+
+	// Second stage: score every candidate against the question with a
+	// cross-encoder and keep the best topK. Only these reach the prompt and the
+	// sources[] response, so the reranker decides what the answer is grounded in.
+	matches, err = s.reranker.Rerank(ctx, question, matches, topK)
+	if err != nil {
+		return Answer{}, fmt.Errorf("rerank chunks: %w", err)
 	}
 
 	// Generate: build a grounding prompt from the retrieved chunks and have the

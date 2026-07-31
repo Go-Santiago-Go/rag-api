@@ -61,12 +61,13 @@ func main() {
 	}
 	bedrockClient := bedrockruntime.NewFromConfig(cfg)
 	embedder := service.NewBedrockEmbedder(bedrockClient)
+	reranker := service.NewBedrockReranker(bedrockClient)
 	generator := service.NewBedrockGenerator(bedrockClient)
 
-	// Inject the concrete embedder and store into the service, which only ever
-	// sees the Embedder and VectorStore interfaces.
+	// Inject the concrete embedder, store and reranker into the service, which
+	// only ever sees the Embedder, VectorStore and Reranker interfaces.
 	ingestSvc := service.NewIngestService(embedder, pg)
-	querySvc := service.NewQueryService(embedder, pg, generator)
+	querySvc := service.NewQueryService(embedder, pg, reranker, generator)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", handler.Health())
