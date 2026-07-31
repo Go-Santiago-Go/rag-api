@@ -4,6 +4,7 @@
     {
       "id": "arch-01",
       "question": "How can I list the Lease objects that each kube-apiserver owns?",
+      "paraphrase": "How do I find the heartbeat records that each control plane API instance registers for itself?",
       "expected_document_id": "architecture/leases",
       "type": "identifier",
       "notes": "kube-system namespace, label selector apiserver.kubernetes.io/identity=kube-apiserver",
@@ -12,6 +13,7 @@
     {
       "id": "arch-02",
       "question": "What command tells me whether a Linux node is using cgroup v1 or cgroup v2, and what output means v2?",
+      "paraphrase": "How can I tell which version of the kernel resource-limiting hierarchy a Linux node is using?",
       "expected_document_id": "architecture/cgroups",
       "type": "identifier",
       "notes": "stat -fc %T /sys/fs/cgroup/ returns cgroup2fs for v2, tmpfs for v1",
@@ -20,6 +22,7 @@
     {
       "id": "arch-03",
       "question": "Which finalizer does Kubernetes add to an object during foreground cascading deletion?",
+      "paraphrase": "When deletion waits for every dependent object to go away first, what marker is placed on the owner while it waits?",
       "expected_document_id": "architecture/garbage-collection",
       "type": "identifier",
       "notes": "foregroundDeletion",
@@ -76,6 +79,7 @@
     {
       "id": "cont-01",
       "question": "What delivery guarantee do container lifecycle hooks provide?",
+      "paraphrase": "Can a container's startup or shutdown handler fire more than once for a single event?",
       "expected_document_id": "containers/container-lifecycle-hooks",
       "type": "identifier",
       "notes": "At least once, so a hook may be called more than once",
@@ -92,6 +96,7 @@
     {
       "id": "cont-03",
       "question": "What is the default imagePullPolicy and when does the kubelet skip pulling an image?",
+      "paraphrase": "By default, will the node agent download a container image again when a copy is already on the machine?",
       "expected_document_id": "containers/images",
       "type": "identifier",
       "notes": "IfNotPresent skips the pull when the image is already present locally",
@@ -100,6 +105,7 @@
     {
       "id": "cont-04",
       "question": "Which API group defines the RuntimeClass resource?",
+      "paraphrase": "Which API group owns the resource that selects which sandbox implementation a Pod runs under?",
       "expected_document_id": "containers/runtime-class",
       "type": "identifier",
       "notes": "node.k8s.io",
@@ -116,6 +122,7 @@
     {
       "id": "cont-06",
       "question": "What protocol does the kubelet use to talk to the container runtime, and which side is the client?",
+      "paraphrase": "When the node agent and the container runtime talk to each other, which side opens the connection and over what wire protocol?",
       "expected_document_id": "containers/cri",
       "type": "identifier",
       "notes": "gRPC, with the kubelet acting as the client",
@@ -124,6 +131,7 @@
     {
       "id": "net-01",
       "question": "How many endpoints does an EndpointSlice hold by default, and what is the highest I can configure?",
+      "paraphrase": "What caps the number of backends grouped into one of the objects that tracks a Service's backends, and can I raise it?",
       "expected_document_id": "services-networking/endpoint-slices",
       "type": "identifier",
       "notes": "100 by default via maxEndpointsPerSlice, up to a maximum of 1000",
@@ -132,6 +140,7 @@
     {
       "id": "net-02",
       "question": "Which Service field makes traffic go only to endpoints on the same node as the caller?",
+      "paraphrase": "How do I keep requests to a Service from leaving the machine they started on?",
       "expected_document_id": "services-networking/service-traffic-policy",
       "type": "identifier",
       "notes": "spec.internalTrafficPolicy set to Local",
@@ -140,6 +149,7 @@
     {
       "id": "net-03",
       "question": "Which annotation turns on topology aware routing for a Service?",
+      "paraphrase": "How do I ask a Service to prefer backends in the same availability zone as the caller?",
       "expected_document_id": "services-networking/topology-aware-routing",
       "type": "identifier",
       "notes": "service.kubernetes.io/topology-mode set to Auto",
@@ -156,6 +166,7 @@
     {
       "id": "net-05",
       "question": "What is the default ndots setting in a Pod's resolv.conf?",
+      "paraphrase": "How many dots must a hostname contain before a Pod's DNS resolver treats it as already fully qualified?",
       "expected_document_id": "services-networking/dns-pod-service",
       "type": "identifier",
       "notes": "options ndots:5",
@@ -196,6 +207,7 @@
     {
       "id": "stor-01",
       "question": "How many EBS volumes can be attached to a node running an M5 instance type?",
+      "paraphrase": "What is the ceiling on how many AWS block storage volumes a single node can have attached at once?",
       "expected_document_id": "storage/storage-limits",
       "type": "identifier",
       "notes": "25 on M5, C5, R5, T3 and Z1D; 39 otherwise",
@@ -204,6 +216,7 @@
     {
       "id": "stor-02",
       "question": "Which reclaim policy runs a basic scrub of the volume so it can be claimed again, and is it still recommended?",
+      "paraphrase": "Is there a way to wipe a volume's contents so it can be claimed again, without deleting the volume itself?",
       "expected_document_id": "storage/persistent-volumes",
       "type": "identifier",
       "notes": "Recycle, which runs rm -rf on the volume and is deprecated in favour of dynamic provisioning",
@@ -212,6 +225,7 @@
     {
       "id": "stor-03",
       "question": "How do I delay binding a volume until a Pod that needs it is actually scheduled?",
+      "paraphrase": "How do I delay picking the backing volume until the workload that needs it has been placed on a node?",
       "expected_document_id": "storage/storage-classes",
       "type": "identifier",
       "notes": "volumeBindingMode set to WaitForFirstConsumer",
@@ -220,6 +234,7 @@
     {
       "id": "stor-04",
       "question": "Which fields does a VolumeSnapshotClass contain?",
+      "paraphrase": "What can an administrator configure about how point-in-time copies of volumes get provisioned and cleaned up?",
       "expected_document_id": "storage/volume-snapshot-classes",
       "type": "identifier",
       "notes": "driver, deletionPolicy and parameters",
@@ -244,6 +259,7 @@
     {
       "id": "stor-07",
       "question": "Which PVC field can reference an arbitrary object as the source of the volume's data, rather than only a PVC or snapshot?",
+      "paraphrase": "How can a new volume be populated from an arbitrary custom object rather than only from another claim or a snapshot?",
       "expected_document_id": "storage/volume-populators-and-data-sources",
       "type": "identifier",
       "notes": "dataSourceRef, as opposed to dataSource",
@@ -260,6 +276,7 @@
     {
       "id": "stor-09",
       "question": "Which kubelet metric reports that a volume is in an abnormal condition?",
+      "paraphrase": "How would monitoring tell me that a mounted disk underneath a workload has developed a problem?",
       "expected_document_id": "storage/volume-health-monitoring",
       "type": "identifier",
       "notes": "kubelet_volume_stats_health_status_abnormal",

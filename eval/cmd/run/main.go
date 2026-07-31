@@ -41,8 +41,15 @@ const (
 )
 
 type question struct {
-	ID                 string `json:"id"`
-	Question           string `json:"question"`
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	// Paraphrase asks the same thing without naming the rare token the label
+	// matches on, and is set only on identifier questions. The first baseline
+	// showed identifier questions outscoring conceptual ones, but most of those
+	// questions contained their own answer's distinctive token, so the result
+	// could have been measuring string overlap rather than retrieval. Running
+	// the set both ways separates the two.
+	Paraphrase         string `json:"paraphrase"`
 	ExpectedDocumentID string `json:"expected_document_id"`
 	// ExpectedSubstring is verbatim text from the answering passage. Document
 	// labels turned out to saturate: 45 topically disjoint documents make "did
@@ -91,6 +98,16 @@ func (t *tally) recall(k int) float64 {
 	return float64(t.hits[k]) / float64(t.total)
 }
 
+// text returns the phrasing to search with. Questions without a paraphrase are
+// unaffected by the flag, so a paraphrased run changes only the identifier
+// bucket and the conceptual rows stay directly comparable to the baseline.
+func (q question) text(paraphrased bool) string {
+	if paraphrased && q.Paraphrase != "" {
+		return q.Paraphrase
+	}
+	return q.Question
+}
+
 // tallySet holds the overall population plus one tally per question type.
 type tallySet struct {
 	overall *tally
@@ -113,21 +130,23 @@ func main() {
 	golden := flag.String("golden", "eval/golden.json", "path to the labelled question set")
 	dsn := flag.String("dsn", "", "Postgres DSN; defaults to DATABASE_URL then the docker-compose default")
 	verbose := flag.Bool("verbose", false, "print per-question ranks")
+	paraphrased := flag.Bool("paraphrase", false, "ask identifier questions in their token-free phrasing")
+	rerank := flag.Bool("rerank", false, "reorder the retrieved candidates with the cross-encoder")
 	flag.Parse()
 
-	if err := run(context.Background(), *golden, *dsn, *verbose); err != nil {
+	if err := run(context.Background(), *golden, *dsn, *verbose, *paraphrased, *rerank); err != nil {
 		fmt.Fprintln(os.Stderr, "eval failed:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, goldenPath, dsn string, verbose bool) error {
-	set, err := loadGolden(goldenPath)
+func run(ctx context.Context, goldenPath, dsn string, verbose, paraphrased, rerank bool) error {
+	set, err := loadGolden(goldenPath, paraphrased)
 	if err != nil {
 		return err
 	}
 
-	embedder, vs, err := dependencies(ctx, dsn)
+	embedder, vs, reranker, err := dependencies(ctx, dsn)
 	if err != nil {
 		return err
 	}
@@ -144,9 +163,22 @@ func run(ctx context.Context, goldenPath, dsn string, verbose bool) error {
 
 	start := time.Now()
 	for _, q := range set.Questions {
-		matches, err := search(ctx, embedder, vs, q.Question, depth)
+		text := q.text(paraphrased)
+		matches, err := search(ctx, embedder, vs, text, depth)
 		if err != nil {
 			return fmt.Errorf("question %s: %w", q.ID, err)
+		}
+
+		// Rerank the whole candidate list rather than trimming it to topK. The
+		// set is then unchanged and only its order moves, so recall@20 must come
+		// back identical to the dense run and every difference at a shallower
+		// cutoff is attributable to reordering alone. A shifted recall@20 means
+		// the harness is wrong, not that the cross-encoder is good.
+		if rerank {
+			matches, err = reranker.Rerank(ctx, text, matches, len(matches))
+			if err != nil {
+				return fmt.Errorf("question %s: %w", q.ID, err)
+			}
 		}
 
 		docRank, passageRank := evaluate(matches, q)
@@ -159,7 +191,7 @@ func run(ctx context.Context, goldenPath, dsn string, verbose bool) error {
 		}
 	}
 
-	report(set, docs, passages, time.Since(start))
+	report(set, docs, passages, time.Since(start), paraphrased, rerank)
 	return nil
 }
 
@@ -209,7 +241,7 @@ func evaluate(matches []store.Match, q question) (docRank, passageRank int) {
 	return docRank, passageRank
 }
 
-func loadGolden(path string) (goldenSet, error) {
+func loadGolden(path string, paraphrased bool) (goldenSet, error) {
 	var set goldenSet
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -227,6 +259,12 @@ func loadGolden(path string) (goldenSet, error) {
 		if q.ExpectedSubstring == "" {
 			return set, fmt.Errorf("question %s has no expected_substring", q.ID)
 		}
+		// A missing paraphrase would silently fall back to the original wording,
+		// mixing both phrasings into one number and hiding the very effect the
+		// flag exists to isolate.
+		if paraphrased && q.Type == "identifier" && q.Paraphrase == "" {
+			return set, fmt.Errorf("identifier question %s has no paraphrase", q.ID)
+		}
 	}
 	return set, nil
 }
@@ -234,7 +272,7 @@ func loadGolden(path string) (goldenSet, error) {
 // dependencies builds the same concrete embedder and store that cmd/server
 // wires up, which is what lets the harness measure the real retrieval path
 // without going through HTTP.
-func dependencies(ctx context.Context, dsn string) (service.Embedder, store.VectorStore, error) {
+func dependencies(ctx context.Context, dsn string) (service.Embedder, store.VectorStore, service.Reranker, error) {
 	if dsn == "" {
 		dsn = os.Getenv("DATABASE_URL")
 	}
@@ -246,14 +284,15 @@ func dependencies(ctx context.Context, dsn string) (service.Embedder, store.Vect
 
 	pg, err := store.NewPostgres(ctx, dsn)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect postgres: %w", err)
+		return nil, nil, nil, fmt.Errorf("connect postgres: %w", err)
 	}
 
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load aws config: %w", err)
+		return nil, nil, nil, fmt.Errorf("load aws config: %w", err)
 	}
-	return service.NewBedrockEmbedder(bedrockruntime.NewFromConfig(cfg)), pg, nil
+	client := bedrockruntime.NewFromConfig(cfg)
+	return service.NewBedrockEmbedder(client), pg, service.NewBedrockReranker(client), nil
 }
 
 func rankLabel(rank int) string {
@@ -263,9 +302,17 @@ func rankLabel(rank int) string {
 	return fmt.Sprintf("%d", rank)
 }
 
-func report(set goldenSet, docs, passages *tallySet, elapsed time.Duration) {
-	fmt.Printf("\nquestions: %d   corpus: %s   elapsed: %s\n",
-		docs.overall.total, short(set.CorpusCommit), elapsed.Round(time.Millisecond))
+func report(set goldenSet, docs, passages *tallySet, elapsed time.Duration, paraphrased, rerank bool) {
+	phrasing := "original"
+	if paraphrased {
+		phrasing = "paraphrased"
+	}
+	retrieval := "dense"
+	if rerank {
+		retrieval = "dense+rerank"
+	}
+	fmt.Printf("\nquestions: %d   corpus: %s   phrasing: %s   retrieval: %s   elapsed: %s\n",
+		docs.overall.total, short(set.CorpusCommit), phrasing, retrieval, elapsed.Round(time.Millisecond))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	header := []string{"metric", "population", "n"}
