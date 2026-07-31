@@ -38,10 +38,15 @@ data "aws_iam_policy_document" "github_assume" {
     # The token's subject must be a workflow in THIS repo. Without this
     # condition, any GitHub repo could assume the role. `:*` allows any branch;
     # tighten to `:ref:refs/heads/main` once the pipeline is proven.
+    #
+    # Matched against the immutable ID form of the claim, so the owner and repo
+    # names are wildcards and the numeric IDs carry the security. See the
+    # variables file for the claim format and why this is stronger than matching
+    # on names.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values   = ["repo:*@${var.github_org_id}/*@${var.github_repo_id}:*"]
     }
   }
 }
