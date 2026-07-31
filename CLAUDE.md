@@ -32,10 +32,20 @@ identifiers rather than the repo name, renaming them forces Terraform to destroy
 resources, and the ECR repository name is a contract shared between `infra/bootstrap`, the `data`
 lookup in `infra/`, and the CI push.
 
-The exception does not cover anything that encodes the *GitHub* repo. `github_repo` in
-`infra/bootstrap/variables.tf` is matched against the OIDC token's `sub` claim, so a rename breaks
-deploys with `Not authorized to perform sts:AssumeRoleWithWebIdentity` until bootstrap is re-applied.
-An IAM role *name* is a resource name; the repo inside its trust policy is not.
+The exception does not cover anything that encodes the *GitHub* repo. The CI role's trust policy is
+matched against the OIDC token's `sub` claim, which now carries immutable numeric IDs:
+`repo:Go-Santiago-Go@85260356/rag-api@1281557182:ref:refs/heads/main`. `infra/bootstrap` matches on
+those IDs and wildcards the names, so a rename cannot break CD again. An IAM role *name* is a
+resource name; the identity inside its trust policy is not.
+
+If deploys fail with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, read the claim AWS
+actually received rather than guessing at the policy:
+
+```bash
+aws cloudtrail lookup-events \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRoleWithWebIdentity \
+  --max-results 1 --query 'Events[].CloudTrailEvent' --output text
+```
 
 ## Status: built and deployed (Phase 8 complete)
 
