@@ -59,6 +59,18 @@ func (s *Postgres) Save(ctx context.Context, chunks []Chunk) error {
 	return nil
 }
 
+// Reset deletes every stored chunk. It exists for the evaluation harness, which
+// must start from a known empty corpus: re-ingesting over an existing load would
+// silently double every document and make recall numbers meaningless.
+//
+// Deliberately not on the VectorStore interface. Nothing in the request path
+// should be able to erase the corpus, and keeping it off the interface means the
+// service literally cannot call it.
+func (s *Postgres) Reset(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `TRUNCATE TABLE chunks`)
+	return err
+}
+
 // Search returns the topk chunks most similar to the query embedding, nearest
 // first. This query is the retrieval half of RAG.
 func (s *Postgres) Search(ctx context.Context, embedding []float32, topk int) ([]Match, error) {
