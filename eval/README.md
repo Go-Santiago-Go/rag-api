@@ -3,8 +3,9 @@
 Measures how well `go-rag-api` retrieves the right document for a question, so that changes to
 chunking and search can be compared against a baseline instead of assessed by eye.
 
-**Status:** built. Dense baseline and cross-encoder reranking both measured, across two question
-phrasings. See [Results](#results) below.
+**Status:** built. Three changes measured against it so far: cross-encoder reranking, question
+phrasing, and chunking strategy. Two were adopted, one finding was retracted. See
+[Results](#results).
 
 ## Layout
 
@@ -78,6 +79,22 @@ go run ./eval/cmd/run -verbose       # per-question ranks, for diagnosing a sing
 there is rarely a good reason to. `run` takes about 6 seconds dense and 12 with reranking, and the
 flags compose, so `-rerank -paraphrase` is the hardest of the four configurations.
 
+Comparing chunking strategies means re-ingesting the corpus under each one, which is a server restart
+rather than a flag:
+
+```bash
+CHUNK_STRATEGY=fixed CHUNK_SIZE=500 CHUNK_OVERLAP=50 go run ./cmd/server
+go run ./eval/cmd/load && go run ./eval/cmd/run -rerank -paraphrase
+```
+
+**Restart the server by building the binary, not with `go run`.** `go run` compiles to a temporary
+binary and runs it as a child process, so killing the `go run` parent orphans a child still holding
+:8080. The next configuration then fails to bind, exits, and the eval silently measures against the
+previous server. This cost a full sweep: three configurations returned byte-identical numbers and
+identical chunk counts, which is the only reason it was caught. A readiness probe against `/health`
+does not help, because it tests liveness and any server satisfies it. Check identity instead: the
+`chunking strategy=...` line the server logs at startup.
+
 ## The three parts, and the contract between them
 
 **The corpus** is fixed. 45 documents, committed to the repo rather than fetched, pinned to upstream
@@ -134,8 +151,13 @@ narrow interface is what makes "delete everything" unreachable from the request 
 
 ## Results
 
-Fixed-size chunking (500 runes, 50 overlap), Titan v2 embeddings, 35 questions, corpus `e95679c`.
-Measured 2026-07-30 (dense) and 2026-07-31 (reranked). Corpus load took 2m50s for 1,126 chunks.
+Titan v2 embeddings, 35 questions, corpus `e95679c`. Measured 2026-07-30 (dense baseline) and
+2026-07-31 (reranking, then chunking).
+
+The tables immediately below hold chunking fixed at the original 500 runes so that reranking is the
+only variable. [Chunking](#chunking) then varies chunking with retrieval held fixed. The service
+default has since moved to structure-aware chunking at 800 runes, so these are the historical
+baseline rather than current production numbers.
 
 Passage-level recall, the metric to track:
 
@@ -212,11 +234,89 @@ vocabulary: `cont-06` and `stor-04` now miss at the document level because the q
 "kubelet" and "snapshot", words any real user would say. Treat 88.2% as a ceiling and 47.1% as a
 floor. The direction of every conclusion above holds at both ends.
 
+### Chunking
+
+Retrieval is held at dense+rerank while chunking varies. Each configuration is a full corpus
+re-ingest, driven through the real `/ingest` endpoint with `CHUNK_STRATEGY`, `CHUNK_SIZE` and
+`CHUNK_OVERLAP`.
+
+The investigation started from a defect visible in the stored data rather than from a hypothesis. Of
+the 1,126 chunks the original configuration produced, 1,040 (92%) had at least one severed edge and
+786 (70%) began with a lowercase letter, meaning mid-sentence. The chunk holding the answer to
+`net-06` began `"ons may be established"` and ended `"all outbound conne"`: a fragment bounded by two
+broken words, which is what the embedder saw, and what a caller would have been shown as a citation.
+
+Section sizes in the corpus set the ceiling. 563 markdown sections, median 631 runes, p99 3,669. At a
+500-rune ceiling 61% of sections would overflow into the fixed-size fallback, so the strategy would
+mostly degenerate into what it was replacing. At 800 only 40% overflow.
+
+| config | chunks | mean body runes | body starts mid-sentence |
+|---|---|---|---|
+| fixed-500 | 1,126 | ~490 | 69.8% |
+| fixed-800 | 709 | 778 | 66.1% |
+| structured-800 | 942 | 517 | **4.8%** |
+
+The measure is the chunk *body*, with any heading line stripped. Measuring the whole chunk reports 0%
+for the structured strategy and is worthless, because every structured chunk begins with `###`. The
+heading masks whether the prose beneath it starts mid-word, which is the thing that matters. This
+error was caught by reading an actual `/query` response, not by the harness.
+
+Passage recall@5:
+
+| config | dense, original | dense, paraphrased | dense+rerank, paraphrased |
+|---|---|---|---|
+| fixed-500 | 77.1% | 57.1% | 62.9% |
+| fixed-800 | 82.9% | **65.7%** | 74.3% |
+| structured-800 | 82.9% | 60.0% | **77.1%** |
+
+**fixed-800 exists to make the comparison interpretable.** Structure-aware chunking at 800 against
+fixed chunking at 500 varies two things at once. Without the middle row a win could not be attributed
+to either.
+
+**Chunk size is the dominant variable.** 500 to 800 runes is +8.6 points dense and +11.4 reranked,
+3 to 4 questions, outside the noise floor. The largest measured gain in the project came from changing
+a constant.
+
+**That gain must be discounted, though not dismissed.** 800-rune chunks mean 709 chunks rather than
+1,126, and at a fixed k fewer, larger chunks are each likelier to contain the label. Part of the
+improvement is the ruler.
+
+**Structure-awareness did not move recall.** Against fixed-800 at a matched ceiling it ties on the
+original phrasing (82.9%), is worse dense on the paraphrased set (65.7% to 60.0%, two questions) and
+better reranked (74.3% to 77.1%, one question). Every one of those deltas is at or inside the noise
+floor.
+
+**And the matched-ceiling comparison is not clean either.** fixed-800 and structured-800 share a
+ceiling but realize different mean sizes, 778 against 624, because a structure-aware chunker decides
+its own size distribution. Strategy and size cannot be fully separated, because the strategy is partly
+a size decision.
+
+So the honest result is that the mechanism worked and the outcome did not follow. Severed boundaries
+went from 66% to 4.8%, and recall barely moved.
+
+**Structure-aware chunking is nevertheless the default**, on a ground this harness does not measure.
+`sources[]` is the service's contract, and chunks are returned to callers verbatim. Under fixed-size
+chunking a citation can literally be `"ons may be established ... all outbound conne"`. Under
+structure-aware chunking a citation is a heading plus whole paragraphs. That is a user-facing defect
+fixed at recall parity, and recall parity is the whole of the claim being made for it.
+
+Two residual defects, both from the same cause. A single paragraph larger than the ceiling has no
+internal boundary to cut on, so it falls through to the rune walk: that is the remaining 4.8% of
+mid-word starts, and it also leaves 10 chunks (1.1%) holding an unbalanced code fence, from code
+blocks over 800 runes. The fix would be to let an atomic block exceed the ceiling, which trades a
+measured invariant for a cosmetic one and has not been made.
+
 ### Known failures
 
-Nine questions never retrieve their answering passage even at k=20 under `-paraphrase -rerank`:
-`arch-01`, `cont-04`, `cont-06`, `net-01`, `net-02`, `net-06`, `net-07`, `stor-04`, `stor-06`. Under
-the original phrasing the list is three: `net-06`, `net-07`, `stor-06`.
+Under the current default (structured-800) with `-paraphrase -rerank`, five questions never retrieve
+their answering passage even at k=20: `cont-04`, `cont-06`, `net-02`, `net-03`, `net-08`.
+
+Under the original fixed-500 configuration the list was nine: `arch-01`, `cont-04`, `cont-06`,
+`net-01`, `net-02`, `net-06`, `net-07`, `stor-04`, `stor-06`. Six of those became reachable and two
+new ones (`net-03`, `net-08`) broke, for a net gain of four questions at k=20. This is the one place
+chunking clearly helped, and it is the failure mode reranking provably cannot touch, since promotion
+cannot reach a chunk that was never retrieved. Note it tracks the size change rather than the
+strategy: fixed-800 reaches the same 85.7% at k=20.
 
 Every label has been verified twice, once to confirm the substring exists in the document it is
 labelled against, and once to confirm it survives intact inside a single stored chunk. A label split

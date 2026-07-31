@@ -1,10 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -13,6 +15,66 @@ import (
 	"github.com/go-santiago-go/go-rag-api/internal/service"
 	"github.com/go-santiago-go/go-rag-api/internal/store"
 )
+
+// Default chunking parameters, all three chosen from measured evidence rather
+// than intuition. See eval/README.md for the comparison.
+//
+// 800 runes over the original 500 is the single largest measured gain in the
+// project: +11.4 points of passage recall@5 under the production retrieval path.
+// Structure-aware splitting adds little recall on top of that, but it cuts
+// severed chunk boundaries from 66% to 4.8% (chunks whose body starts
+// mid-sentence, against fixed-size at the same ceiling), and this service returns
+// its chunks verbatim as sources[]. A citation is a user-facing artifact, so a
+// passage that begins mid-word is a defect the harness cannot see.
+const (
+	defaultChunkStrategy = "structured"
+	defaultChunkSize     = 800
+	defaultChunkOverlap  = 80
+)
+
+// newChunker builds the chunking strategy from the environment.
+//
+// This is configuration rather than a knob for its own sake: comparing two
+// chunking strategies requires re-ingesting the whole corpus under each one, and
+// the evaluation harness drives that through the real /ingest endpoint. Without
+// this, every measurement would need a code edit and a rebuild, which is exactly
+// how two runs stop being comparable. Defaults reproduce the original behaviour.
+func newChunker() service.Chunker {
+	size := envInt("CHUNK_SIZE", defaultChunkSize)
+	overlap := envInt("CHUNK_OVERLAP", defaultChunkOverlap)
+	strategy := cmp.Or(os.Getenv("CHUNK_STRATEGY"), defaultChunkStrategy)
+
+	if strategy != "fixed" && strategy != "structured" {
+		slog.Warn("unknown chunk strategy", "value", strategy, "using", defaultChunkStrategy)
+		strategy = defaultChunkStrategy
+	}
+
+	// Logged after validation so a set of eval numbers can always be traced back
+	// to the configuration that actually produced them, not the one requested.
+	slog.Info("chunking", "strategy", strategy, "size", size, "overlap", overlap)
+
+	if strategy == "fixed" {
+		return service.NewFixedChunker(size, overlap)
+	}
+	return service.NewStructuredChunker(size, overlap)
+}
+
+// envInt reads a positive integer from the environment, falling back to a
+// default. An unparseable or non-positive value is loud rather than silent: a
+// typo that quietly reverted chunk size to the default would invalidate a
+// measurement without anything looking wrong.
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		slog.Warn("ignoring invalid value", "key", key, "value", raw, "using", fallback)
+		return fallback
+	}
+	return n
+}
 
 // main is the composition root: the one place that builds every concrete
 // dependency (Postgres store, Bedrock embedder) and injects them down through
@@ -64,9 +126,10 @@ func main() {
 	reranker := service.NewBedrockReranker(bedrockClient)
 	generator := service.NewBedrockGenerator(bedrockClient)
 
-	// Inject the concrete embedder, store and reranker into the service, which
-	// only ever sees the Embedder, VectorStore and Reranker interfaces.
-	ingestSvc := service.NewIngestService(embedder, pg)
+	// Inject the concrete embedder, store, chunker and reranker into the service,
+	// which only ever sees the Embedder, VectorStore, Chunker and Reranker
+	// interfaces.
+	ingestSvc := service.NewIngestService(embedder, newChunker(), pg)
 	querySvc := service.NewQueryService(embedder, pg, reranker, generator)
 
 	mux := http.NewServeMux()

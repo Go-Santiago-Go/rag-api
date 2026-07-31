@@ -7,26 +7,20 @@ import (
 	"github.com/go-santiago-go/go-rag-api/internal/store"
 )
 
-// Chunking parameters. Fixed-size passages with a small overlap so an idea that
-// straddles a boundary survives whole in at least one chunk. Tunable later if
-// retrieval quality warrants; kept as constants to avoid magic numbers.
-const (
-	chunkSize    = 500
-	chunkOverlap = 50
-)
-
 // IngestService turns a document's text into stored, searchable vectors. It
-// depends only on the Embedder and VectorStore interfaces, so tests can drive
-// the whole ingest flow with fakes, no Bedrock and no database.
+// depends only on the Embedder, Chunker and VectorStore interfaces, so tests can
+// drive the whole ingest flow with fakes, no Bedrock and no database.
 type IngestService struct {
 	embedder Embedder
+	chunker  Chunker
 	store    store.VectorStore
 }
 
 // NewIngestService wires the ingest pipeline from its dependencies. The concrete
-// Bedrock embedder and pgvector store are injected at main; a test injects fakes.
-func NewIngestService(embedder Embedder, vs store.VectorStore) *IngestService {
-	return &IngestService{embedder: embedder, store: vs}
+// Bedrock embedder, chunking strategy and pgvector store are injected at main; a
+// test injects fakes.
+func NewIngestService(embedder Embedder, chunker Chunker, vs store.VectorStore) *IngestService {
+	return &IngestService{embedder: embedder, chunker: chunker, store: vs}
 }
 
 // Ingest makes a document searchable: it splits text into overlapping passages,
@@ -34,7 +28,7 @@ func NewIngestService(embedder Embedder, vs store.VectorStore) *IngestService {
 // synchronously, so a returned nil means every chunk is embedded and stored. The
 // first embed or save failure aborts and is returned wrapped for context.
 func (s *IngestService) Ingest(ctx context.Context, documentID, text string) error {
-	passages := Chunk(text, chunkSize, chunkOverlap)
+	passages := s.chunker.Chunk(text)
 
 	// Embed one passage at a time, then save the batch in a single store call.
 	// Embedding must use the same model as queries or the vectors are not

@@ -42,6 +42,8 @@ internal/handler/          # HTTP handlers: parse request, call service, write r
 internal/service/          # RAG logic: chunk, embed, search, generate.
 internal/store/            # VectorStore interface plus pgvector implementation. Only place that knows SQL.
 internal/store/schema.sql  # canonical schema, embedded in the binary and applied idempotently on startup.
+eval/                      # retrieval evaluation: pinned corpus, labelled questions, recall@k harness.
+eval/README.md             # results, controls and caveats. Read before changing retrieval or chunking.
 migrations/001_init.sql    # same schema, for the local docker-compose init hook.
 infra/                     # Terraform: the billable app stack (VPC, RDS, S3, ECS Express service).
 infra/bootstrap/           # Terraform: the free, persistent stack (ECR repo, GitHub OIDC CI role).
@@ -85,6 +87,11 @@ CI (`.github/workflows/ci.yml`) runs `go build`, `go vet`, and `go test` on push
   is sufficient.
 - **Testing.** Test pure logic (chunking) directly; test `/query` with a fake `VectorStore`
   implementation rather than a real DB. Prefer table-driven tests.
+- **Retrieval changes are measured, not argued.** `eval/` holds a pinned corpus, 35 hand-labelled
+  questions and a recall@k harness. Take a baseline before a change and re-measure after, and add a
+  control when a change varies more than one thing at once. Two adopted changes (reranking,
+  chunking) and two rejected ones (hybrid search, document-level labels) all came from this, as did
+  one retracted finding. 35 questions means one question is 2.9 points, so small deltas are noise.
 - **Comments explain the *why*, not the *what*.** Document exported identifiers per Go convention.
 
 ## Deployment (AWS) notes

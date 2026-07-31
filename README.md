@@ -18,7 +18,8 @@ Two endpoints, one service:
 - `POST /ingest` makes a document searchable: chunk the text, embed each chunk with Bedrock (Titan
   v2), and persist the vectors in pgvector.
 - `POST /query` answers a question: embed the question with the same model, run a cosine similarity
-  search for the nearest chunks, and have a Claude model write an answer grounded in them, returned
+  search for a shortlist of chunks, rerank that shortlist with a cross-encoder, and have a Claude
+  model write an answer grounded in the survivors, returned
   as `{ answer, sources[] }`.
 
 > **Deployed:** the full service runs on AWS via ECS Express Mode. `terraform
@@ -40,7 +41,8 @@ flowchart LR
     S -->|raw docs| O[(S3)]
 ```
 
-A document is chunked, each chunk is embedded with Bedrock, and the vectors are stored in pgvector.
+A document is split into chunks on its markdown section boundaries, each chunk is embedded with
+Bedrock, and the vectors are stored in pgvector.
 A query is embedded with the same model, then answered in two retrieval stages: vector similarity
 search returns a shortlist of 20 candidates, and a cross-encoder reranks those and keeps the best 5.
 Those 5 are handed to an LLM that writes an answer grounded in them, returned with the source chunks
@@ -188,11 +190,17 @@ later without disturbing the core.
 | Text extraction | Local extraction | Free and offline; reach for a managed service only if the workload needs it | AWS Textract |
 | Compute | ECS Express Mode on Fargate | Managed networking, load balancing, and scaling from a container image; App Runner is closed to new customers | Full ECS Fargate |
 | Retrieval | Dense search + cross-encoder rerank | Measured: reranking moved the answering passage into first place for 7 more questions out of 35, and reached dense retrieval's recall@5 using 3 chunks instead of 5 | Hybrid BM25 + RRF, dense only |
+| Chunking | Structure-aware on markdown headings, 800 runes | Chunks are returned verbatim as citations, and fixed-size splitting left 70% of them starting mid-sentence; recall is at parity with fixed-size at the same ceiling | Fixed-size, semantic (embedding-distance) chunking |
 
 The pattern under all of it is **dependency inversion at the boundaries**: the RAG logic depends on
-a `VectorStore` interface (plus embedder and generator interfaces), and the concrete pieces
+`VectorStore`, `Embedder`, `Chunker`, `Reranker` and `Generator` interfaces, and the concrete pieces
 (pgvector, Bedrock) are plugged in at `main`. That is what lets the service be tested with a fake
 store and no database, and lets pgvector be swapped without touching the RAG logic.
+
+`Chunker` earns its place for a second reason. Chunking strategy is the biggest lever on retrieval
+quality and the one most worth experimenting with, so a new strategy is a new implementation rather
+than an edit to the ingest pipeline, and two strategies can be compared without either one being
+disturbed.
 
 ## Status
 
@@ -209,28 +217,39 @@ Built local-first, then deployed to AWS. Everything below is done and verified e
 - [x] Deployed on ECS Express Mode with a live public URL, `/ingest` and `/query` verified in the cloud
 - [x] Retrieval evaluation harness: pinned corpus, labelled question set, recall@k baseline
 - [x] Cross-encoder reranking, adopted on measured evidence rather than by default
+- [x] `Chunker` interface with fixed-size and structure-aware strategies, compared against controls
 
 ## Evaluation
 
 Retrieval quality is measured, not assumed. [`eval/`](eval/) holds a pinned 45 document corpus, 35
 questions hand-labelled with the passage that answers each one, and a harness reporting recall@k.
 
-Passage-level recall on the harder of the two question phrasings, 35 questions:
+Passage-level recall@5 on the harder of the two question phrasings, 35 questions, showing what each
+change bought:
 
-| retrieval | recall@1 | recall@3 | recall@5 | recall@20 |
-|---|---|---|---|---|
-| dense only | 22.9% | 48.6% | 57.1% | 74.3% |
-| dense + rerank | 42.9% | 57.1% | 62.9% | 74.3% |
+| configuration | recall@5 |
+|---|---|
+| fixed-size chunking, dense retrieval (starting point) | 57.1% |
+| \+ cross-encoder reranking | 62.9% |
+| \+ 800-rune chunks | 74.3% |
+| \+ structure-aware chunking (current default) | **77.1%** |
 
-recall@20 is identical by construction: reranking reorders the shortlist it was given and cannot add
-to it, which doubles as a correctness check on the harness. The gain is concentrated at rank 1, which
-is the expected signature of a reranker.
+Every step was measured before being adopted, and the harness was as useful for what it ruled *out*:
 
-The harness is also what ruled things *out*. Document-level labels scored 97.1% recall@5 and were
-discarded as saturated, since a metric with one question of dynamic range cannot compare two
-configurations. Hybrid BM25 search was deprioritized for a measured reason: lexical matching helps
-when the query contains the answer's rare token, and that is precisely the case dense retrieval
-already handles well. See [`eval/README.md`](eval/README.md) for the full results and caveats.
+- **Document-level labels were discarded.** They scored 97.1% recall@5 against a 100% ceiling, so the
+  entire dynamic range was one question. A metric that cannot fail cannot inform.
+- **Hybrid BM25 search was deprioritized.** Lexical matching only helps when the query contains the
+  answer's rare token, which is the case dense retrieval already handles near-saturated. Where the
+  failures actually are, the query holds no rare token either.
+- **A finding was retracted.** An early result showed identifier questions outscoring conceptual ones,
+  until a control revealed the questions had been written containing their own answers' distinctive
+  tokens.
+- **Chunk size mattered more than chunking strategy.** The largest single gain, +11.4 points, came
+  from changing a constant. Structure-aware splitting cut severed chunk boundaries from 70% to 4.8%
+  and moved recall barely at all. It is the default anyway, because chunks are returned verbatim as
+  `sources[]` and a citation beginning mid-word is a defect the harness cannot see.
+
+See [`eval/README.md`](eval/README.md) for the full results, the controls, and the caveats.
 
 ## Stack
 
@@ -289,8 +308,15 @@ see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ### `POST /ingest`
 
-Makes a document searchable: chunk the text, embed each chunk with Bedrock Titan v2, and store the
-vectors in pgvector. Runs synchronously and returns `201 Created` once every chunk is stored.
+Makes a document searchable: split the text into chunks, embed each chunk with Bedrock Titan v2, and
+store the vectors in pgvector. Runs synchronously and returns `201 Created` once every chunk is
+stored.
+
+Chunking defaults to structure-aware splitting on markdown headings with an 800-rune ceiling, and is
+configurable with `CHUNK_STRATEGY` (`structured` or `fixed`), `CHUNK_SIZE` and `CHUNK_OVERLAP`. The
+chosen configuration is logged at startup, so any set of evaluation numbers traces back to the
+settings that produced it. Sections over the ceiling fall back to fixed-size splitting with the
+heading repeated on each piece; sections under half the ceiling merge with what follows.
 
 The service resolves its database connection in three ways, most specific first: `DATABASE_URL` if
 set (local dev / `docker compose`), otherwise the standard `PG*` vars (`PGHOST`, `PGUSER`,
@@ -318,8 +344,9 @@ incomplete body returns `400`, and a Bedrock or database failure returns `500`.
 Answers a question about the ingested corpus: embed the question with the same Titan v2 model, retrieve
 the 20 nearest chunks from pgvector by vector similarity, rerank those with a cross-encoder and keep
 the best 5, then have a Claude model write an answer constrained to them. Returns
-`{ answer, sources[] }`, where each source is a chunk that backed the answer and `score` is the
-reranker's relevance judgement rather than the cosine similarity search produced. Generation goes
+`{ answer, sources[] }`, where each source is a chunk that backed the answer. Sources come back in
+the reranker's order, most relevant first; the relevance score itself is used internally to order
+them and is not part of the response. Generation goes
 through the Bedrock Converse API, so the running machine needs the Claude model and Cohere Rerank v3.5
 enabled in the region (a one-time Anthropic use-case form per account gates first use of Claude).
 
