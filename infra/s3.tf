@@ -1,5 +1,8 @@
 # infra/s3.tf
-# The raw-document bucket: where /ingest stores the original uploaded files.
+# The raw-document bucket, provisioned for storing original uploaded files.
+# Nothing writes to it yet: /ingest takes text in the request body and persists
+# only the resulting chunks and vectors to pgvector. The bucket and its task-role
+# grant exist so raw-file upload can be added without another infra change.
 # Named with the account ID so it is globally unique without a manual suffix.
 
 # Read-only lookup of the current account (used here for the bucket name and in
