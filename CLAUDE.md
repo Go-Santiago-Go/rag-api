@@ -17,7 +17,7 @@ Strands agent) consumes `/query` as a tool. The structured `sources[]` response 
 keeps that boundary clean.
 
 **Stack:** Go, pgvector/Postgres, AWS Bedrock (Titan v2 embeddings plus a Claude model for
-generation), S3 (raw doc storage), Docker, Terraform, GitHub Actions to ECR, ECS Express Mode on
+generation), Docker, Terraform, GitHub Actions to ECR, ECS Express Mode on
 Fargate.
 
 **Canonical name:** `rag-api`. Use it for the repo and the README title. Do not introduce alternate
@@ -55,7 +55,7 @@ ECS Express Mode behind a live public URL that returns grounded `{ answer, sourc
 downstream Strands agent (Project 2) consumes `/query` as a tool and is not built yet.
 
 Because AWS resources are torn down after each session to avoid cost (`terraform destroy`), the
-public URL is regenerated per deploy rather than kept always-on. `DEPLOYMENT.md` is the full
+public URL is regenerated per deploy rather than kept always-on. `docs/DEPLOYMENT.md` is the full
 clone-and-deploy walkthrough.
 
 ## Layout
@@ -73,7 +73,10 @@ infra/                     # Terraform: the billable app stack (VPC, RDS, S3, EC
 infra/bootstrap/           # Terraform: the free, persistent stack (ECR repo, GitHub OIDC CI role).
 docker-compose.yml         # local pgvector (pgvector/pgvector:pg16).
 Dockerfile                 # multi-stage; distroless final image.
-DEPLOYMENT.md              # how to clone and deploy to AWS.
+docs/                      # ARCHITECTURE, API, LOCAL_DEV, DEPLOYMENT, OPERATIONS, CONVENTIONS.
+                           #   CONVENTIONS.md governs the README spine and the accuracy guards.
+Makefile                   # task runner; `make help` lists the targets. Verbs match the other portfolio repos.
+.env.example               # every variable the service reads. `make run` loads a sibling .env if present.
 content/                   # gitignored personal writeups and drafts; not part of the shipped repo.
 ```
 
@@ -139,7 +142,7 @@ Non-obvious realities of the deployed setup, learned in Phase 8:
   `psql`. Safe to run every boot.
 - **ECS Express Mode couples LB and task subnet placement into one subnet set.** To get a public URL
   the tasks run in the *public* subnets (locked down by the app SG, which has no inbound rule except
-  the LB rule Express adds itself). The private app subnets and NAT from the three-tier design are
+  the LB rule Express adds itself). The private app subnets and NAT from the multi-tier design are
   provisioned but off the request path. Dropping to hand-rolled `aws_ecs_service` is the escape hatch
   if tasks must be fully private.
 - **Deploy by `:latest`, and beware a stale tag.** The classic failure is the running container

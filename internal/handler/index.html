@@ -89,6 +89,12 @@
   }
   footer { margin-top: 3rem; color: var(--muted); font-size: .8rem; }
   footer code { font-family: var(--mono); color: var(--text); }
+  .answer strong { font-weight: 600; color: var(--text); }
+  .answer code {
+    font-family: var(--mono); font-size: .9em;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 4px; padding: .05rem .3rem;
+  }
 </style>
 </head>
 <body>
@@ -171,7 +177,7 @@ form.onsubmit = async (e) => {
     const n = data.sources ? data.sources.length : 0;
     status.textContent = `${n} source${n === 1 ? "" : "s"} in ${elapsed} ms`;
 
-    answerEl.textContent = data.answer;
+    renderAnswer(data.answer);
     render(data.sources || []);
     result.hidden = false;
   } catch (err) {
@@ -181,6 +187,34 @@ form.onsubmit = async (e) => {
     submit.disabled = false;
   }
 };
+
+// The model answers in light markdown, so **bold** and `code` would otherwise
+// show up as literal punctuation. Only those two are handled: the .answer block
+// is white-space: pre-wrap, so paragraphs and list bullets already render as
+// written, and a fuller markdown parser would be a dependency this page exists
+// to avoid.
+//
+// Emphasis is applied by building elements and Text nodes, never by assigning
+// innerHTML. The answer is model output quoting retrieved documents, so treating
+// any of it as markup would be an injection path straight through the corpus.
+const INLINE = /\*\*([\s\S]+?)\*\*|`([^`]+?)`/g;
+
+function renderAnswer(text) {
+  answerEl.replaceChildren();
+  let last = 0;
+  for (const m of text.matchAll(INLINE)) {
+    if (m.index > last) {
+      answerEl.appendChild(document.createTextNode(text.slice(last, m.index)));
+    }
+    const el = document.createElement(m[1] !== undefined ? "strong" : "code");
+    el.textContent = m[1] !== undefined ? m[1] : m[2];
+    answerEl.appendChild(el);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) {
+    answerEl.appendChild(document.createTextNode(text.slice(last)));
+  }
+}
 
 // Sources are built with textContent rather than innerHTML: chunk text is
 // arbitrary document content and must never be interpreted as markup.

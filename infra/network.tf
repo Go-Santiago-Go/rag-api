@@ -1,5 +1,5 @@
 # infra/network.tf
-# The three-tier VPC for go-rag-api: public, private-app, and private-data
+# The multi-tier VPC for go-rag-api: public, private-app, and private-data
 # subnets across two AZs. Built in three logical passes below:
 #   1. VPC + subnets   (the address space)
 #   2. IGW + NAT        (the doors to the internet)
@@ -55,7 +55,7 @@ resource "aws_subnet" "public_b" {
 # task, but ECS Express Mode places the service in the PUBLIC subnets (it uses
 # one subnet set for both the load balancer and the tasks, and a public URL
 # needs public subnets). So these subnets and the NAT are provisioned by the
-# three-tier design but currently sit off the request path, the point where a
+# multi-tier design but currently sit off the request path, the point where a
 # hand-rolled aws_ecs_service would put tasks to keep them fully private. ---
 # No public IP (map_public_ip_on_launch defaults to false).
 resource "aws_subnet" "app_a" {
